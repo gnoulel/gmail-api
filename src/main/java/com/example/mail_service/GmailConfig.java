@@ -22,9 +22,10 @@ import java.util.Map;
 @Configuration
 public class GmailConfig {
     private static final String APPLICATION_NAME = "Gmail API";
+    private  String accessToken = "";
     private static final File filePath = new File(System.getProperty("user.dir") + "/credentials.json");
     private static final JacksonFactory JSON_FACTORY = JacksonFactory.getDefaultInstance();
-    public static Gmail getGmailService() throws IOException, GeneralSecurityException {
+    public  Gmail getGmailService() throws IOException, GeneralSecurityException {
 
         InputStream in = new FileInputStream(filePath);
         GoogleClientSecrets clientSecrets = GoogleClientSecrets.load(JSON_FACTORY, new InputStreamReader(in));

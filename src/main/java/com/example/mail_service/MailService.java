@@ -1,99 +1,135 @@
 package com.example.mail_service;
 
-import com.google.api.client.util.DateTime;
 import com.google.api.services.gmail.Gmail;
 import com.google.api.services.gmail.model.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.codec.binary.Base64;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.Nullable;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
-import java.security.GeneralSecurityException;
-import java.text.SimpleDateFormat;
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
+import java.util.*;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class MailService {
     private static final String user = "me";
+    private final GmailConfig gmailConfig;
+    private static final File filePath = new File(System.getProperty("user.dir") + "/vs2023031319.xlsx");
 
-    public List<MessageReader> getMails(@Nullable String sender, @Nullable String subject) {
-        List<MessageReader> messageReaders = new ArrayList<>();
+    public List<Map<String, String>> getMails() throws Exception {
+        String query = "in:inbox " + " subject:(TEST)" + " OR has:attachment AND -codechef AND -edureka)";
 
+        Gmail gmail = gmailConfig.getGmailService();
+        Gmail.Users.Messages.List request = gmail.users().messages().list(user).setQ(query).setMaxResults(5L);
+        ListMessagesResponse messagesResponse = request.execute();
+
+        request.setPageToken(messagesResponse.getNextPageToken());
+        List<Message> messages = messagesResponse.getMessages();
+
+        if (messages == null) {
+            return new ArrayList<>();
+        }
+
+        List<Map<String, String>> messageList = new ArrayList<>();
+
+        for (Message value : messages) {
+            String messageId = value.getId();
+            Message message = gmail.users().messages().get(user, messageId).execute();
+
+            String attachmentId = "";
+            String fileName = "";
+
+            String mimeType = message.getPayload().getMimeType();
+            List<MessagePart> messageParts = message.getPayload().getParts();
+
+            if (messageParts != null && (mimeType.contains("multipart/mixed") || mimeType.contains("multipart/related"))) {
+                for (MessagePart messagePart : messageParts) {
+                    String content = messagePart.getMimeType();
+                    if (content.contains("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") || content.contains("octet-stream")) {
+                        attachmentId = messagePart.getBody().getAttachmentId();
+                        fileName = messagePart.getFilename();
+                    }
+
+                    if (!"".equals(attachmentId) && !"".equals(fileName) && fileName.contains("vs")) {
+                        break;
+                    }
+                }
+
+                String fileData = gmail.users().messages().attachments().get(user, messageId, attachmentId).execute().getData();
+                createFile(fileData, fileName);
+            }
+            Map<String, String> result = new HashMap<>();
+            List<MessagePartHeader> headers = message.getPayload().getHeaders();
+            String subject = "";
+            String date = "";
+            boolean isSubjectFound = false;
+            boolean isDateFound = false;
+            for (MessagePartHeader header : headers) {
+                if (header.getName().equalsIgnoreCase("subject")) {
+                    subject = header.getValue();
+                    isSubjectFound = true;
+                } else if (header.getName().equalsIgnoreCase("date")) {
+                    date = header.getValue();
+                    isDateFound = true;
+                }
+                if (isSubjectFound && isDateFound) {
+                    break;
+                }
+            }
+            result.put("id", messageId);
+            result.put("subject", subject);
+            result.put("date", date);
+            result.put("msg", message.getSnippet());
+            messageList.add(result);
+        }
+
+        return messageList;
+    }
+
+    public void createFile(String fileData, String fileName) throws IOException {
+        String SRC = System.getProperty("user.dir") + "/" + fileName;
+        File file = new File(SRC);
+
+        file.getParentFile().mkdirs();
+        file.createNewFile();
+
+        try (FileOutputStream fos = new FileOutputStream(file, false)) {
+            byte[] decoder = Base64.getDecoder().decode(fileData);
+            fos.write(decoder);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void readFile() {
         try {
-
-            Gmail gmailService = GmailConfig.getGmailService();
-            ListMessagesResponse listResponse = gmailService.users().messages().list(user).execute();
-            if (listResponse != null && listResponse.getMessages() != null) {
-                for (Message message : listResponse.getMessages()) {
-                    Message msgDetail = gmailService.users().messages().get(user, message.getId()).execute();
-                    List<MessagePart> parts = msgDetail.getPayload().getParts();
-
-                    if (parts != null) {
-                        List<MessagePartHeader> headers = msgDetail.getPayload().getHeaders();
-                        MessagePartBody body = msgDetail.getPayload().getBody();
-
-                        MessageReader msgReader = readParts(parts);
-                        msgReader.setMsgId(msgDetail.getId());
-                        msgReader.setDate(msgDetail.getInternalDate());
-                        for (MessagePartHeader header : headers) {
-                            String name = header.getName();
-                            if (name.equals("From") || name.equals("from")) {
-                                msgReader.setSender(header.getValue());
-                                break;
-                            }
+            FileInputStream fis = new FileInputStream(filePath);
+            XSSFWorkbook wb = new XSSFWorkbook(fis);
+            XSSFSheet sheet = wb.getSheetAt(0);
+            for (Row row : sheet) {
+                Iterator<Cell> cellIterator = row.cellIterator();   //iterating over each column
+                while (cellIterator.hasNext()) {
+                    Cell cell = cellIterator.next();
+                    switch (cell.getCellType()) {
+                        case Cell.CELL_TYPE_STRING ->    //field that represents string cell type
+                                System.out.print(cell.getStringCellValue() + "\t\t\t");
+                        case Cell.CELL_TYPE_NUMERIC ->    //field that represents number cell type
+                                System.out.print(cell.getNumericCellValue() + "\t\t\t");
+                        default -> {
                         }
-                        long startDateMills = DateUtils.atStartOfDay(new Date()).getTime();
-                        long endDateMills = DateUtils.atEndOfDay(new Date()).getTime();
-
-                        if (body != null && body.getAttachmentId() != null) {
-                            MessagePartBody attachments = gmailService.users().messages().attachments().get(user, message.getId(), body.getAttachmentId()).execute();
-                            String temp = "1";
-                        }
-
-                        if (msgReader.getSender() != null
-                                && msgReader.getSender().contains(sender)
-                                && startDateMills < msgDetail.getInternalDate()
-                                && msgDetail.getInternalDate() < endDateMills)
-                            messageReaders.add(msgReader);
                     }
                 }
             }
-        } catch (GeneralSecurityException | IOException e) {
-            throw new RuntimeException(e);
+        } catch (Exception e) {
+            e.printStackTrace();
         }
-        return messageReaders;
-    }
-
-
-    private MessageReader readParts(List<MessagePart> parts) {
-        MessageReader msgReader = new MessageReader();
-        int cnt = 0;
-        for (MessagePart part : parts) {
-            try {
-                String mime = part.getMimeType();
-                if (mime.contentEquals("text/plain")) {
-                    String s = new String(Base64.decodeBase64(part.getBody().getData().getBytes()));
-                    msgReader.setText(s);
-                } else if (mime.contentEquals("multipart/alternative")) {
-                    List<MessagePart> subparts = part.getParts();
-                    MessageReader subreader = readParts(subparts);
-                    msgReader.setText(subreader.getText());
-                } else if (mime.contentEquals("application/octet-stream")) {
-                    cnt++;
-                    msgReader.setNo_of_files(cnt);
-                }
-
-            } catch (Exception e) {
-                // get file here
-            }
-        }
-        return msgReader;
     }
 }
